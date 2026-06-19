@@ -19,11 +19,15 @@ def build_database_url() -> str:
     if settings.database_url:
         return settings.database_url.replace("postgres://", "postgresql+psycopg://", 1)
 
-    host = os.getenv("POSTGRES_HOST") or os.getenv("DB_HOST") or "localhost"
+    host = os.getenv("POSTGRES_HOST") or os.getenv("DB_HOST")
+    name = os.getenv("POSTGRES_DB") or os.getenv("DB_NAME")
+    user = os.getenv("POSTGRES_USER") or os.getenv("DB_USER")
+    password = os.getenv("POSTGRES_PASSWORD") or os.getenv("DB_PASSWORD")
+    if not all([host, name, user, password]):
+        logger.warning("PostgreSQL environment is not configured, using SQLite fallback")
+        return "sqlite:////tmp/events_aggregator.db"
+
     port = os.getenv("POSTGRES_PORT") or os.getenv("DB_PORT") or "5432"
-    name = os.getenv("POSTGRES_DB") or os.getenv("DB_NAME") or "events_aggregator"
-    user = os.getenv("POSTGRES_USER") or os.getenv("DB_USER") or "postgres"
-    password = os.getenv("POSTGRES_PASSWORD") or os.getenv("DB_PASSWORD") or "postgres"
     return (
         "postgresql+psycopg://"
         f"{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{quote_plus(name)}"
