@@ -61,6 +61,7 @@ class EventRepository:
         event.changed_at = parse_dt(data["changed_at"])
         event.created_at = parse_dt(data["created_at"])
         event.status_changed_at = parse_dt(data["status_changed_at"])
+        self.db.flush()
         return event.changed_at
 
 
