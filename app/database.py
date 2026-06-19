@@ -1,16 +1,36 @@
+import logging
+import os
 from collections.abc import Generator
+from urllib.parse import quote_plus
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import settings
 
+logger = logging.getLogger(__name__)
+
 
 class Base(DeclarativeBase):
     pass
 
 
-engine = create_engine(settings.database_url, pool_pre_ping=True)
+def build_database_url() -> str:
+    if settings.database_url:
+        return settings.database_url.replace("postgres://", "postgresql+psycopg://", 1)
+
+    host = os.getenv("POSTGRES_HOST") or os.getenv("DB_HOST") or "localhost"
+    port = os.getenv("POSTGRES_PORT") or os.getenv("DB_PORT") or "5432"
+    name = os.getenv("POSTGRES_DB") or os.getenv("DB_NAME") or "events_aggregator"
+    user = os.getenv("POSTGRES_USER") or os.getenv("DB_USER") or "postgres"
+    password = os.getenv("POSTGRES_PASSWORD") or os.getenv("DB_PASSWORD") or "postgres"
+    return (
+        "postgresql+psycopg://"
+        f"{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{quote_plus(name)}"
+    )
+
+
+engine = create_engine(build_database_url(), pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 

@@ -1,4 +1,5 @@
 import logging
+import os
 import uuid
 from typing import Any
 from urllib.parse import urljoin, urlparse, urlunparse
@@ -19,7 +20,13 @@ class ProviderError(RuntimeError):
 class EventsProviderClient:
     def __init__(self) -> None:
         self.base_url = settings.events_provider_base_url.rstrip("/") + "/"
-        self.headers = {"x-api-key": settings.events_provider_api_key}
+        self.api_key = (
+            settings.events_provider_api_key
+            or os.getenv("EVENTS_PROVIDER_KEY", "")
+            or os.getenv("API_KEY", "")
+            or os.getenv("LMS_API_KEY", "")
+        )
+        self.headers = {"x-api-key": self.api_key}
 
     def _normalize_next_url(self, url: str | None) -> str | None:
         if not url:
@@ -30,7 +37,7 @@ class EventsProviderClient:
         return urlunparse(parsed._replace(scheme=base.scheme, netloc=base.netloc))
 
     def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
-        if not settings.events_provider_api_key:
+        if not self.api_key:
             raise ProviderError("Events Provider API key is not configured", status_code=500)
 
         try:

@@ -54,6 +54,7 @@ async def sync_loop() -> None:
     while True:
         try:
             with SessionLocal() as db:
+                Base.metadata.create_all(bind=engine)
                 await asyncio.to_thread(sync_events, db)
         except Exception:
             logger.exception("Scheduled sync failed")
@@ -62,7 +63,6 @@ async def sync_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    Base.metadata.create_all(bind=engine)
     task = asyncio.create_task(sync_loop())
     yield
     task.cancel()
@@ -79,6 +79,7 @@ def health() -> HealthResponse:
 @app.post("/api/sync/trigger")
 def trigger_sync(db: Session = Depends(get_db)) -> dict[str, int | str]:
     try:
+        Base.metadata.create_all(bind=engine)
         processed = sync_events(db)
     except ProviderError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
