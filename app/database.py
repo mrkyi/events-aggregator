@@ -1,5 +1,4 @@
 import logging
-import os
 from collections.abc import Generator
 from urllib.parse import quote_plus
 
@@ -19,22 +18,23 @@ def build_database_url() -> str:
     if settings.database_url:
         return settings.database_url.replace("postgres://", "postgresql+psycopg://", 1)
 
-    connection_string = os.getenv("POSTGRES_CONNECTION_STRING") or os.getenv("DATABASE_URL")
-    if connection_string:
-        return connection_string.replace("postgres://", "postgresql+psycopg://", 1)
-
-    host = os.getenv("POSTGRES_HOST") or os.getenv("DB_HOST")
-    name = os.getenv("POSTGRES_DB") or os.getenv("DB_NAME")
-    user = os.getenv("POSTGRES_USER") or os.getenv("POSTGRES_USERNAME") or os.getenv("DB_USER")
-    password = os.getenv("POSTGRES_PASSWORD") or os.getenv("DB_PASSWORD")
-    if not all([host, name, user, password]):
+    if not all(
+        [
+            settings.postgres_host,
+            settings.postgres_db,
+            settings.postgres_user,
+            settings.postgres_password,
+        ]
+    ):
         logger.warning("PostgreSQL environment is not configured, using SQLite fallback")
         return "sqlite:////tmp/events_aggregator.db"
 
-    port = os.getenv("POSTGRES_PORT") or os.getenv("DB_PORT") or "5432"
     return (
         "postgresql+psycopg://"
-        f"{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{quote_plus(name)}"
+        f"{quote_plus(settings.postgres_user)}:"
+        f"{quote_plus(settings.postgres_password)}@"
+        f"{settings.postgres_host}:{settings.postgres_port}/"
+        f"{quote_plus(settings.postgres_db)}"
     )
 
 

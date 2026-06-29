@@ -16,3 +16,13 @@ def test_events_paginator_iterates_all_pages():
     assert client.events_page.call_count == 2
     client.events_page.assert_any_call(None, "2000-01-01")
     client.events_page.assert_any_call("next-url", "2000-01-01")
+
+
+def test_events_paginator_handles_empty_first_page():
+    client = Mock()
+    client.events_page.return_value = {"next": None, "results": []}
+
+    events = list(EventsPaginator(client, changed_at="2000-01-01"))
+
+    assert events == []
+    client.events_page.assert_called_once_with(None, "2000-01-01")

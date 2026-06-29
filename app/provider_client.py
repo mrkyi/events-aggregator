@@ -1,5 +1,4 @@
 import logging
-import os
 import uuid
 from typing import Any
 from urllib.parse import urljoin, urlparse, urlunparse
@@ -20,12 +19,7 @@ class ProviderError(RuntimeError):
 class EventsProviderClient:
     def __init__(self) -> None:
         self.base_url = settings.events_provider_base_url.rstrip("/") + "/"
-        self.api_key = (
-            settings.events_provider_api_key
-            or os.getenv("EVENTS_PROVIDER_KEY", "")
-            or os.getenv("API_KEY", "")
-            or os.getenv("LMS_API_KEY", "")
-        )
+        self.api_key = settings.events_provider_api_key
         self.headers = {"x-api-key": self.api_key}
 
     def _normalize_next_url(self, url: str | None) -> str | None:
@@ -52,8 +46,9 @@ class EventsProviderClient:
         return response
 
     def events_page(self, url: str | None, changed_at: str) -> dict[str, Any]:
-        request_url = url or urljoin(self.base_url, f"api/events/?changed_at={changed_at}")
-        response = self._request("GET", request_url)
+        request_url = url or urljoin(self.base_url, "api/events/")
+        params = None if url else {"changed_at": changed_at}
+        response = self._request("GET", request_url, params=params)
         payload = response.json()
         payload["next"] = self._normalize_next_url(payload.get("next"))
         return payload

@@ -16,7 +16,9 @@ def test_provider_client_fetches_events_page(mock_request):
     page = client.events_page(None, "2000-01-01")
 
     assert page == {"next": None, "results": [{"id": "event-id"}]}
-    mock_request.assert_called_once()
+    _, request_url = mock_request.call_args.args[:2]
+    assert request_url.endswith("/api/events/")
+    assert mock_request.call_args.kwargs["params"] == {"changed_at": "2000-01-01"}
 
 
 @patch("app.provider_client.httpx.request")

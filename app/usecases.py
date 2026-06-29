@@ -1,13 +1,33 @@
 import uuid
+from dataclasses import dataclass
+from datetime import UTC, date, datetime
 from typing import Protocol
 
+from app.enums import EventStatus
 from app.models import Event, Registration
-from app.schemas import TicketCreate
-from app.services import get_available_seats, seat_exists_in_pattern, utc_now
+from app.schemas import (
+    EventDetail,
+    EventSummary,
+    PaginatedEvents,
+    SeatsResponse,
+    TicketCreate,
+)
+from app.services import build_page_url, get_available_seats, seat_exists_in_pattern, utc_now
 
 
 class EventReader(Protocol):
     def get(self, event_id: uuid.UUID) -> Event | None:
+        pass
+
+    def list(self, date_from, offset: int, limit: int) -> list[Event]:
+        pass
+
+    def count(self, date_from) -> int:
+        pass
+
+
+class SeatProvider(Protocol):
+    def get_seats(self, event_id: uuid.UUID) -> list[str]:
         pass
 
 
@@ -43,6 +63,102 @@ class UnitOfWork(Protocol):
         pass
 
 
+@dataclass(frozen=True)
+class EventPage:
+    page: int
+    page_size: int
+    date_from: date | None
+    base_url: str
+
+
+def place_summary(event: Event) -> dict:
+    return {
+        "id": event.place.id,
+        "name": event.place.name,
+        "city": event.place.city,
+        "address": event.place.address,
+    }
+
+
+def event_summary(event: Event) -> EventSummary:
+    return EventSummary(
+        id=event.id,
+        name=event.name,
+        place=place_summary(event),
+        event_time=event.event_time,
+        registration_deadline=event.registration_deadline,
+        status=event.status,
+        number_of_visitors=event.number_of_visitors,
+    )
+
+
+def date_to_datetime(value: date | None) -> datetime | None:
+    if value is None:
+        return None
+    return datetime.combine(value, datetime.min.time(), UTC)
+
+
+class ListEventsUsecase:
+    def __init__(self, events: EventReader) -> None:
+        self.events = events
+
+    def do(self, page: EventPage) -> PaginatedEvents:
+        start = date_to_datetime(page.date_from)
+        total = self.events.count(start)
+        events = self.events.list(
+            start,
+            offset=(page.page - 1) * page.page_size,
+            limit=page.page_size,
+        )
+        next_page = page.page + 1 if page.page * page.page_size < total else None
+        previous_page = page.page - 1 if page.page > 1 else None
+
+        return PaginatedEvents(
+            count=total,
+            next=build_page_url(page.base_url, next_page, page.page_size, page.date_from)
+            if next_page
+            else None,
+            previous=build_page_url(page.base_url, previous_page, page.page_size, page.date_from)
+            if previous_page
+            else None,
+            results=[event_summary(event) for event in events],
+        )
+
+
+class GetEventUsecase:
+    def __init__(self, events: EventReader) -> None:
+        self.events = events
+
+    def do(self, event_id: uuid.UUID) -> EventDetail:
+        event = self.events.get(event_id)
+        if event is None:
+            raise LookupError("Event not found")
+
+        return EventDetail(
+            id=event.id,
+            name=event.name,
+            place={**place_summary(event), "seats_pattern": event.place.seats_pattern},
+            event_time=event.event_time,
+            registration_deadline=event.registration_deadline,
+            status=event.status,
+            number_of_visitors=event.number_of_visitors,
+        )
+
+
+class GetSeatsUsecase:
+    def __init__(self, events: EventReader, client: SeatProvider) -> None:
+        self.events = events
+        self.client = client
+
+    def do(self, event_id: uuid.UUID) -> SeatsResponse:
+        event = self.events.get(event_id)
+        if event is None:
+            raise LookupError("Event not found")
+
+        seats = get_available_seats(event, self.client)
+        return SeatsResponse(event_id=event.id, available_seats=seats)
+
+
 class CreateTicketUsecase:
     def __init__(
         self,
@@ -62,7 +178,7 @@ class CreateTicketUsecase:
             raise LookupError("Event not found")
 
         now = utc_now()
-        if event.status != "published":
+        if event.status != EventStatus.PUBLISHED:
             raise ValueError("Event is not published")
         if event.registration_deadline <= now:
             raise ValueError("Registration deadline has passed")
@@ -71,7 +187,7 @@ class CreateTicketUsecase:
         if not seat_exists_in_pattern(payload.seat, event.place.seats_pattern):
             raise ValueError("Seat does not exist")
 
-        seats = get_available_seats(None, event, self.client)
+        seats = get_available_seats(event, self.client)
         if payload.seat not in seats:
             raise ValueError("Seat is not available")
 

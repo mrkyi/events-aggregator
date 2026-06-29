@@ -3,15 +3,14 @@ import re
 import uuid
 from datetime import UTC, date, datetime
 
-from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import Event, Place, Registration, SyncMetadata
+from app.enums import EventStatus
+from app.models import Event, SyncMetadata
 from app.paginator import EventsPaginator
 from app.provider_client import EventsProviderClient
 from app.repositories import EventRepository, SyncRepository
-from app.schemas import TicketCreate
 
 logger = logging.getLogger(__name__)
 
@@ -48,40 +47,6 @@ def seat_exists_in_pattern(seat: str, seats_pattern: str) -> bool:
 
 def get_sync_metadata(db: Session) -> SyncMetadata:
     return SyncRepository(db).get()
-
-
-def upsert_event(db: Session, data: dict) -> datetime:
-    place_data = data["place"]
-    place_id = uuid.UUID(place_data["id"])
-    event_id = uuid.UUID(data["id"])
-
-    place = db.get(Place, place_id)
-    if place is None:
-        place = Place(id=place_id)
-        db.add(place)
-
-    place.name = place_data["name"]
-    place.city = place_data["city"]
-    place.address = place_data["address"]
-    place.seats_pattern = place_data["seats_pattern"]
-    place.changed_at = parse_dt(place_data["changed_at"])
-    place.created_at = parse_dt(place_data["created_at"])
-
-    event = db.get(Event, event_id)
-    if event is None:
-        event = Event(id=event_id)
-        db.add(event)
-
-    event.name = data["name"]
-    event.place_id = place_id
-    event.event_time = parse_dt(data["event_time"])
-    event.registration_deadline = parse_dt(data["registration_deadline"])
-    event.status = data["status"]
-    event.number_of_visitors = data["number_of_visitors"]
-    event.changed_at = parse_dt(data["changed_at"])
-    event.created_at = parse_dt(data["created_at"])
-    event.status_changed_at = parse_dt(data["status_changed_at"])
-    return event.changed_at
 
 
 def sync_events(db: Session, client: EventsProviderClient | None = None) -> int:
@@ -126,8 +91,8 @@ def sync_events(db: Session, client: EventsProviderClient | None = None) -> int:
         raise
 
 
-def get_available_seats(db: Session, event: Event, client: EventsProviderClient) -> list[str]:
-    if event.status != "published":
+def get_available_seats(event: Event, client: EventsProviderClient) -> list[str]:
+    if event.status != EventStatus.PUBLISHED:
         raise ValueError("Event is not published")
 
     cached = _seats_cache.get(event.id)
@@ -140,81 +105,8 @@ def get_available_seats(db: Session, event: Event, client: EventsProviderClient)
     return seats
 
 
-def register_ticket(db: Session, payload: TicketCreate, client: EventsProviderClient) -> uuid.UUID:
-    event = db.get(Event, payload.event_id)
-    if event is None:
-        raise LookupError("Event not found")
-
-    now = utc_now()
-    if event.status != "published":
-        raise ValueError("Event is not published")
-    if event.registration_deadline <= now:
-        raise ValueError("Registration deadline has passed")
-    if event.event_time <= now:
-        raise ValueError("Event has already started")
-    if not seat_exists_in_pattern(payload.seat, event.place.seats_pattern):
-        raise ValueError("Seat does not exist")
-
-    seats = get_available_seats(db, event, client)
-    if payload.seat not in seats:
-        raise ValueError("Seat is not available")
-
-    ticket_id = client.register(
-        event.id,
-        {
-            "first_name": payload.first_name,
-            "last_name": payload.last_name,
-            "email": str(payload.email),
-            "seat": payload.seat,
-        },
-    )
-
-    registration = Registration(
-        event_id=event.id,
-        ticket_id=ticket_id,
-        first_name=payload.first_name,
-        last_name=payload.last_name,
-        email=str(payload.email),
-        seat=payload.seat,
-    )
-    db.add(registration)
-    db.commit()
-    _seats_cache.pop(event.id, None)
-    return ticket_id
-
-
-def unregister_ticket(db: Session, ticket_id: uuid.UUID, client: EventsProviderClient) -> bool:
-    registration = db.scalars(
-        select(Registration).where(
-            Registration.ticket_id == ticket_id,
-            Registration.cancelled_at.is_(None),
-        )
-    ).first()
-    if registration is None:
-        raise LookupError("Registration not found")
-
-    event = db.get(Event, registration.event_id)
-    if event is None:
-        raise LookupError("Event not found")
-    if event.event_time <= utc_now():
-        raise ValueError("Event has already passed")
-
-    success = client.unregister(event.id, ticket_id)
-    registration.cancelled_at = utc_now()
-    db.commit()
-    _seats_cache.pop(event.id, None)
-    return success
-
-
 def build_page_url(base_url: str, page: int, page_size: int, date_from: date | None) -> str:
     params = [f"page={page}", f"page_size={page_size}"]
     if date_from:
         params.append(f"date_from={date_from.isoformat()}")
     return f"{base_url}?{'&'.join(params)}"
-
-
-def count_events(db: Session, date_from: date | None) -> int:
-    stmt = select(func.count()).select_from(Event)
-    if date_from:
-        stmt = stmt.where(Event.event_time >= datetime.combine(date_from, datetime.min.time(), UTC))
-    return db.scalar(stmt) or 0
